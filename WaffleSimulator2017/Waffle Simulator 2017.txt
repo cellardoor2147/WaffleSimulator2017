@@ -1,0 +1,1385 @@
+#WAFFLE SIMULATOR 2017#
+#|
+   /Story/
+   The year is 20XX. In a small college town, Greedy Company Inc. announces their plans 
+   to establish a Waffle Planet restaurant. As a sentient waffle, you'd rather not be eaten. 
+   Accordingly, you take to the streets, removing any flyers that advertise the grand opening 
+   of Waffle Planet. (For optimal atmosphere, listen to "Spiderman 2 Pizza Theme" while playing)
+   
+   /Controls/
+   W – moves waffle up     Up-arrow – shoots butter up
+   A – moves waffle left   Left-arrow – shoots butter left
+   S – moves waffle down   Right-arrow – shoots butter right
+   D – moves waffle right  Down-arrow – shoots butter down
+
+   /Rules/
+   Hungry students spawn at four points on the screen. If they touch you, you take damage.
+   Your waffle is crispy-brown when it has two health-points and red when it has one health-point. 
+   If your waffle's health-points equal zero, you lose. After killing fifteen students, a syrup 
+   spawns in the middle of the screen. Collecting this restores one health-point. Your objective 
+   is to collect all of the flyers scattered throughout the game. Every six seconds, another flyer 
+   spawns. If you collect them all before another one spawns, you win.
+
+   /Notes about code/
+   Due to the use of overlays, negative x-coordinates move entities right, and negative
+   y-coordinates move entities left.
+|#
+
+include world
+include image
+import lists as L
+length = L.length
+contains = L.any
+keep = L.filter
+
+#DATA TYPES
+data Position:
+  | posn(x :: Number, y :: Number)
+end
+
+data Direction:
+  | up
+  | down
+  | left
+  | right
+end
+
+data Waffle:
+  | waffle(posn :: Position, health :: Number, students-killed :: Number)
+end
+
+data Student:
+  | student(posn :: Position, direction :: Direction, chasing-waffle :: Boolean)
+end
+
+data Butter:
+  | butter(posn :: Position, direction :: Direction, has-been-shot :: Boolean)
+end
+
+data Item:
+  | syrup(posn :: Position)
+  | flyer(posn :: Position)
+end
+
+data World:
+  | world(waffle :: Waffle, students :: List<Student>, butter :: Butter, items :: List<Item>, time-since-item-spawn :: Number)
+end
+#DATA TYPES
+
+#ASSETS
+SIDE = 100
+
+BIGSQUARE = rectangle(SIDE, SIDE, "solid", "sandybrown")
+ANGRYBIGSQUARE = rectangle(SIDE, SIDE, "solid", "red")
+LITTLESQUARE = rectangle(SIDE / 5, SIDE / 5, "solid", "brown")
+
+WAFFLE = 
+  overlay-xy(LITTLESQUARE, -1 * (3 * (SIDE / 5)), -1 * (3 * (SIDE / 5)), 
+    overlay-xy(LITTLESQUARE, -1 * (SIDE / 5), -1 * (3 * (SIDE / 5)), 
+      overlay-xy(LITTLESQUARE, -1 * (3 * (SIDE / 5)), -1 * (SIDE / 5), 
+        overlay-xy(LITTLESQUARE, -1 * (SIDE / 5), -1 * (SIDE / 5), 
+          BIGSQUARE))))
+
+ANGRYWAFFLE =
+    overlay-xy(LITTLESQUARE, -1 * (3 * (SIDE / 5)), -1 * (3 * (SIDE / 5)), 
+    overlay-xy(LITTLESQUARE, -1 * (SIDE / 5), -1 * (3 * (SIDE / 5)), 
+      overlay-xy(LITTLESQUARE, -1 * (3 * (SIDE / 5)), -1 * (SIDE / 5), 
+        overlay-xy(LITTLESQUARE, -1 * (SIDE / 5), -1 * (SIDE / 5), 
+          ANGRYBIGSQUARE))))
+
+STUDENT =
+  underlay-align("middle", "bottom", circle(SIDE / 2, "solid", "black"), 
+    overlay-xy(circle(SIDE / 20, "solid", "black"), -1 * (SIDE / 2.5), -1 * (SIDE / 4), 
+      overlay-xy(circle(SIDE / 20, "solid", "black"), -1 * (SIDE / 6), -1 * (SIDE / 4), 
+        circle(SIDE / 3, "solid", "peach-puff"))))
+
+BUTTER =
+  rectangle(SIDE / 5, SIDE / 5, "solid", "yellow")
+
+SYRUP = 
+  overlay(text("syrup", SIDE / 5, "black"), 
+    circle(SIDE / 2, "solid", "goldenrod"))
+
+FLYER = 
+  overlay(text("flyer", SIDE / 5, "black"), 
+    rectangle(SIDE, SIDE, "solid", "ivory"))
+
+HOUSE = 
+  overlay(above(triangle(SIDE / 2, "solid", "salmon"), rectangle(SIDE / 3, SIDE / 3, "solid", "brown")), 
+    rectangle(SIDE, SIDE, "solid", "yellow-green"))
+
+TALLSTREET = above(HOUSE, above(HOUSE, HOUSE))
+SHORTSTREET = beside(HOUSE, HOUSE)
+LONGSTREET = beside(HOUSE, beside(HOUSE, beside(HOUSE, beside(HOUSE, beside(HOUSE, beside(HOUSE, beside(HOUSE, beside(HOUSE, HOUSE))))))))
+
+GAMEBOARD = 
+  overlay-xy(SHORTSTREET, -5 * SIDE, -4 * SIDE, 
+    overlay-xy(SHORTSTREET, -2 * SIDE, -4 * SIDE, 
+      overlay-xy(SHORTSTREET, -5 * SIDE, -2 * SIDE, 
+        overlay-xy(SHORTSTREET, -2 * SIDE, -2 * SIDE,
+          overlay-align("right", "middle", TALLSTREET, 
+            overlay-align("left", "middle", TALLSTREET,
+              overlay-align("left", "bottom", 
+                LONGSTREET,
+                overlay-align("left", "top", 
+                  LONGSTREET, 
+                  rectangle(SIDE * 9, SIDE * 7, "solid", "light-gray")))))))))
+
+EMPTY =
+  rectangle(0, 0, "solid", "white")
+
+LOSE =
+  overlay(text("At least you tried.", SIDE / 2, "white"), 
+    rectangle(SIDE * 7, SIDE * 5, "solid", "black"))
+
+WIN =
+  overlay(text("I'm not even sure how you managed to do that.", SIDE / 4, "white"), 
+    rectangle(SIDE * 7, SIDE * 5, "solid", "black"))
+  
+INITIAL-WORLD =
+  world(
+    waffle(posn(-4 * SIDE, -3 * SIDE), 2, 0),
+    [list:
+      student(posn(0, -1 * SIDE), right, true),
+      student(posn(-8 * SIDE, -1 * SIDE), left, true),
+      student(posn(0, -5 * SIDE), right, true),
+      student(posn(-8 * SIDE, -5 * SIDE), left, true)],
+    butter(posn(0, 0), right, false),
+    [list: 
+      flyer(posn(-1 * SIDE, -1 * SIDE)),
+      flyer(posn(-7 * SIDE, -1 * SIDE)),
+      flyer(posn(-1 * SIDE, -5 * SIDE)),
+      flyer(posn(-7 * SIDE, -5 * SIDE))],
+    0)
+#ASSETS
+
+#DATA EXTRACTION
+fun extract-waffle-posn(w :: Waffle) -> Position:
+  doc: "extract a waffle's position"
+  cases (Waffle) w:
+    | waffle(position, _, _) => position
+  end
+where:
+  extract-waffle-posn(waffle(posn(100, 200), 2, 0)) is posn(100, 200)
+end
+
+fun extract-student-posn(s :: Student) -> Position:
+  doc: "extract an student's position"
+  cases (Student) s:
+    | student(position, _, _) => position
+  end
+where:
+  extract-student-posn(student(posn(100, 200), up, true)) is posn(100, 200)
+end
+
+fun extract-butter-posn(b :: Butter) -> Position:
+  doc: "extract an butter's position"
+  cases (Butter) b:
+    | butter(position, _, _) => position
+  end
+where:
+  extract-butter-posn(butter(posn(100, 200), up, true)) is posn(100, 200)
+end
+
+fun extract-item-posn(i :: Item) -> Position:
+  doc: "extract an item's position"
+  cases (Item) i:
+    | syrup(position) => position
+    | flyer(position) => position
+  end
+where:
+  extract-item-posn(syrup(posn(100, 200))) is posn(100, 200)
+  extract-item-posn(flyer(posn(100, 200))) is posn(100, 200)
+end
+
+fun extract-x(p :: Position) -> Number:
+  doc: "extract a position's x-value"
+  cases (Position) p:
+    | posn(x, y) => x
+  end
+where:
+  extract-x(posn(100, 200)) is 100
+end
+
+fun extract-y(p :: Position) -> Number:
+  doc: "extract a position's y-value"
+  cases (Position) p:
+    | posn(x, y) => y
+  end
+where:
+  extract-y(posn(100, 200)) is 200
+end
+
+fun extract-butter-beenshot(b :: Butter) -> Boolean:
+  doc: "extract a butter's boolean on whether or not it's been shot"
+  cases (Butter) b:
+    | butter(_, _, beenshot) =>
+      beenshot
+  end
+where:
+  extract-butter-beenshot(butter(posn(-400, -300), right, true)) is true
+  extract-butter-beenshot(butter(posn(-400, -300), right, false)) is false
+end
+
+fun just-syrup(current-items :: List<Item>) -> List<Item>:
+  doc: "isolate just the syrup in a list of items"
+  cases (List<Item>) current-items:
+    | empty => empty
+    | link(first-item, rest-items) =>
+      cases (Item) first-item:
+        | syrup(_) => link(first-item, just-syrup(rest-items))
+        | flyer(_) => just-syrup(rest-items)
+      end
+  end
+where:
+  just-syrup(
+    [list: flyer(posn(-100, -100)),
+      syrup(posn(-200, -200)),
+      flyer(posn(-300, -300))]) is [list: syrup(posn(-200, -200))]
+  just-syrup(
+    [list: flyer(posn(-100, -100)),
+      flyer(posn(-300, -300))]) is empty
+end
+
+fun just-flyers(current-items :: List<Item>) -> List<Item>:
+  doc: "isolate just the flyers in a list of items"
+  cases (List<Item>) current-items:
+    | empty => empty
+    | link(first-item, rest-items) =>
+      cases (Item) first-item:
+        | syrup(_) => just-flyers(rest-items)
+        | flyer(_) => link(first-item, just-flyers(rest-items))
+      end
+  end
+where:
+  just-flyers(
+    [list: flyer(posn(-100, -100)),
+      syrup(posn(-200, -200)),
+      flyer(posn(-300, -300))]) is [list: flyer(posn(-100, -100)), flyer(posn(-300, -300))]
+  just-flyers(
+    [list: syrup(posn(-200, -200))]) is empty
+end
+#DATA EXTRACTION
+
+#DISPLAY
+fun lose(current-world :: World) -> Boolean:
+  doc: "determine if the player lost"
+  cases (World) current-world:
+    | world(current-waffle, current-students, current-butter, current-items, time-since-item-spawn) =>
+      cases (Waffle) current-waffle:
+        | waffle(waffle-posn, waffle-health, students-killed) =>
+          waffle-health == 0
+      end
+  end
+where:
+  lose(INITIAL-WORLD) is false
+  lose(world(
+      waffle(posn(-400, -300), 0, 0),
+      [list:
+        student(posn(0, -1 * SIDE), right, true),
+        student(posn(-8 * SIDE, -1 * SIDE), left, true),
+        student(posn(0, -5 * SIDE), right, true),
+        student(posn(-8 * SIDE, -5 * SIDE), left, true)],
+      butter(posn(0, 0), right, false),
+      [list: 
+        flyer(posn(-1 * SIDE, -1 * SIDE)),
+        flyer(posn(-7 * SIDE, -1 * SIDE)),
+        flyer(posn(-1 * SIDE, -5 * SIDE)),
+        flyer(posn(-7 * SIDE, -5 * SIDE))],
+      0)) is true
+end
+
+fun win(current-world :: World) -> Boolean:
+  doc: "determine if the player won"
+  cases (World) current-world:
+    | world(current-waffle, current-students, current-butter, current-items, time-since-item-spawn) =>
+      just-flyers(current-items) == empty
+  end
+where:
+  win(INITIAL-WORLD) is false
+  win(world(
+      waffle(posn(-400, -300), 2, 0),
+      [list:
+        student(posn(0, -1 * SIDE), right, true),
+        student(posn(-8 * SIDE, -1 * SIDE), left, true),
+        student(posn(0, -5 * SIDE), right, true),
+        student(posn(-8 * SIDE, -5 * SIDE), left, true)],
+      butter(posn(0, 0), right, false),
+      empty,
+      0)) is true
+end
+ 
+fun over(current-world :: World) -> Boolean:
+  doc: "determine if the game should end"
+  lose(current-world) or win(current-world)
+where:
+  over(INITIAL-WORLD) is false
+  over(world(
+      waffle(posn(-400, -300), 0, 0),
+      [list:
+        student(posn(0, -1 * SIDE), right, true),
+        student(posn(-8 * SIDE, -1 * SIDE), left, true),
+        student(posn(0, -5 * SIDE), right, true),
+        student(posn(-8 * SIDE, -5 * SIDE), left, true)],
+      butter(posn(0, 0), right, false),
+      [list: 
+        flyer(posn(-1 * SIDE, -1 * SIDE)),
+        flyer(posn(-7 * SIDE, -1 * SIDE)),
+        flyer(posn(-1 * SIDE, -5 * SIDE)),
+        flyer(posn(-7 * SIDE, -5 * SIDE))],
+      0)) is true
+  over(world(
+      waffle(posn(-400, -300), 2, 0),
+      [list:
+        student(posn(0, -1 * SIDE), right, true),
+        student(posn(-8 * SIDE, -1 * SIDE), left, true),
+        student(posn(0, -5 * SIDE), right, true),
+        student(posn(-8 * SIDE, -5 * SIDE), left, true)],
+      butter(posn(0, 0), right, false),
+      empty,
+      0)) is true
+end
+
+fun display-waffle(current-waffle :: Waffle) -> Image:
+  doc: "produce an image given a waffle"
+  cases (Waffle) current-waffle:
+    | waffle(_, health, _) =>
+      if health <= 1:
+        ANGRYWAFFLE
+      else:
+        WAFFLE
+      end
+  end
+where:
+  display-waffle(waffle(posn(100, 200), 2, 0)) is WAFFLE
+  display-waffle(waffle(posn(100, 200), 1, 0)) is ANGRYWAFFLE
+end
+
+fun display-students(students :: List<Student>) -> Image:
+  doc: "produce an image given a list of students"
+  cases (List<Student>) students:
+    | empty => EMPTY
+    | link(first-student, rest-students) =>
+      cases (Student) first-student:
+        | student(posit, _, _) => 
+          overlay-xy(STUDENT, extract-x(posit), extract-y(posit), display-students(rest-students))
+      end
+  end
+where:
+  display-students(
+    [list:
+      student(posn(0, -1 * SIDE), right, true),
+      student(posn(0, -5 * SIDE), right, true)]) is
+  overlay-xy(STUDENT, 0, -500,
+    overlay-xy(STUDENT, 0, -100,
+      EMPTY))
+end
+
+fun display-butter(current-butter :: Butter) -> Image:
+  doc: "produce an image given a butter"
+  cases (Butter) current-butter:
+    | butter(posit, _, beenshot) => 
+      if beenshot:
+        overlay-xy(BUTTER, extract-x(posit), extract-y(posit), EMPTY)
+      else:
+        EMPTY
+      end
+  end
+where:
+  display-butter(butter(posn(-400, -300), right, true)) is overlay-xy(BUTTER, -400, -300, EMPTY)
+end
+
+fun display-items(items :: List<Item>) -> Image:
+  doc: "produce an image given a list of items"
+  cases (List<Item>) items:
+    | empty => EMPTY
+    | link(first-item, rest-items) =>
+      cases (Item) first-item:
+        | syrup(posit) => 
+          overlay-xy(SYRUP, extract-x(posit), extract-y(posit), display-items(rest-items))
+        | flyer(posit) =>
+          overlay-xy(FLYER, extract-x(posit), extract-y(posit), display-items(rest-items))
+      end
+  end
+where:
+  display-items(
+    [list:
+      syrup(posn(0, -1 * SIDE)),
+      flyer(posn(-8 * SIDE, -1 * SIDE)),
+      syrup(posn(0, -5 * SIDE)),
+      flyer(posn(-8 * SIDE, -5 * SIDE))]) is
+  overlay-xy(FLYER, -800, -500,
+    overlay-xy(SYRUP, 0, -500,
+      overlay-xy(FLYER, -800, -100,
+        overlay-xy(SYRUP, 0, -100,
+          EMPTY))))
+end
+
+
+fun display-world(current-world :: World) -> Image:
+  doc: "produce an image given the current world"
+  cases (World) current-world:
+    | world(current-waffle, current-students, current-butter, current-items, time-since-item-spawn) =>
+      if lose(current-world):
+        overlay(LOSE, 
+          overlay-xy(display-students(current-students), 0, 0,
+            overlay-xy(display-butter(current-butter), 0, 0,
+              overlay-xy(display-items(current-items), 0, 0,
+                overlay-xy(display-waffle(current-waffle), 
+                  extract-x(extract-waffle-posn(current-waffle)), extract-y(extract-waffle-posn(current-waffle)), GAMEBOARD)))))
+      else if win(current-world):
+        overlay(WIN, 
+          overlay-xy(display-students(current-students), 0, 0,
+            overlay-xy(display-butter(current-butter), 0, 0,
+              overlay-xy(display-items(current-items), 0, 0,
+                overlay-xy(display-waffle(current-waffle), 
+                  extract-x(extract-waffle-posn(current-waffle)), extract-y(extract-waffle-posn(current-waffle)), GAMEBOARD)))))
+      else:
+        overlay-xy(display-students(current-students), 0, 0,
+          overlay-xy(display-butter(current-butter), 0, 0,
+            overlay-xy(display-items(current-items), 0, 0,
+              overlay-xy(display-waffle(current-waffle), 
+                extract-x(extract-waffle-posn(current-waffle)), extract-y(extract-waffle-posn(current-waffle)), GAMEBOARD))))
+      end
+  end
+where:
+  display-world(INITIAL-WORLD) is 
+  overlay-xy(STUDENT, 0, -100, 
+    overlay-xy(STUDENT, -800, -100, 
+      overlay-xy(STUDENT, 0, -500, 
+        overlay-xy(STUDENT, -800, -500, 
+          overlay-xy(FLYER, -100, -100, 
+            overlay-xy(FLYER, -700, -100, 
+              overlay-xy(FLYER, -100, -500, 
+                overlay-xy(FLYER, -700, -500, 
+                  overlay-xy(WAFFLE, -400, -300, 
+                    GAMEBOARD)))))))))
+end
+#DISPLAY
+
+#KEY
+fun collision(key :: String, waffle-posn :: Position) -> Boolean:
+  doc: "determine if the waffle has hit a wall"
+  if (key == "w") and ((extract-y(waffle-posn) == (-1 * SIDE)) or 
+      (not(extract-x(waffle-posn) == (-1 * SIDE)) and
+        not(extract-x(waffle-posn) == (-4 * SIDE)) and
+        not(extract-x(waffle-posn) == (-7 * SIDE)))): true
+  else if (key == "s") and ((extract-y(waffle-posn) == (-5 * SIDE)) or
+      (not(extract-x(waffle-posn) == (-1 * SIDE)) and
+        not(extract-x(waffle-posn) == (-4 * SIDE)) and
+        not(extract-x(waffle-posn) == (-7 * SIDE)))): true
+  else if (key == "a") and ((extract-x(waffle-posn) == (-1 * SIDE)) or
+      (not(extract-y(waffle-posn) == (-1 * SIDE)) and
+        not(extract-y(waffle-posn) == (-3 * SIDE)) and
+        not(extract-y(waffle-posn) == (-5 * SIDE)))): true
+  else if (key == "d") and ((extract-x(waffle-posn) == (-7 * SIDE)) or
+      (not(extract-y(waffle-posn) == (-1 * SIDE)) and
+        not(extract-y(waffle-posn) == (-3 * SIDE)) and
+        not(extract-y(waffle-posn) == (-5 * SIDE)))): true
+  else: false
+  end
+where:
+  collision("w", posn(-200, -100)) is true
+  collision("w", posn(-300, -400)) is true
+  collision("w", posn(-100, -400)) is false
+  collision("s", posn(-200, -500)) is true
+  collision("s", posn(-300, -400)) is true
+  collision("s", posn(-100, -400)) is false
+  collision("a", posn(-100, -100)) is true
+  collision("a", posn(-400, -200)) is true
+  collision("a", posn(-400, -300)) is false
+  collision("d", posn(-700, -100)) is true
+  collision("d", posn(-400, -200)) is true
+  collision("d", posn(-400, -300)) is false
+end
+
+fun center-butter(waffle-posn :: Position) -> Position:
+  doc: "determine where a butter's position should be based on the waffle's position"
+  posn(extract-x(waffle-posn) - ((2 * SIDE) / 5), extract-y(waffle-posn) - ((2 * SIDE) / 5))
+where:
+  center-butter(posn(-400, -300)) is posn(-440, -340)
+end
+
+fun key-world(current-world :: World, key :: String) -> World:
+  doc: "change the current world based on which key was pressed"
+  cases (World) current-world:
+    | world(current-waffle, current-students, current-butter, current-items, time-since-item-spawn) =>
+      cases (Waffle) current-waffle:
+        | waffle(position, hp, times-hit) =>
+          if (key == "w") and not(collision("w", position)):
+            world(waffle(posn(extract-x(position), extract-y(position) + (SIDE / 10)), hp, times-hit),
+              current-students, current-butter, current-items, time-since-item-spawn)
+          else if (key == "s") and not(collision("s", position)):
+            world(waffle(posn(extract-x(position), extract-y(position) - (SIDE / 10)), hp, times-hit),
+              current-students, current-butter, current-items, time-since-item-spawn)
+          else if (key == "a") and not(collision("a", position)):
+            world(waffle(posn(extract-x(position) + (SIDE / 10), extract-y(position)), hp, times-hit),
+              current-students, current-butter, current-items, time-since-item-spawn)
+          else if (key == "d") and not(collision("d", position)):
+            world(waffle(posn(extract-x(position) - (SIDE / 10), extract-y(position)), hp, times-hit),
+              current-students, current-butter, current-items, time-since-item-spawn)
+          else if (key == "up") and not(extract-butter-beenshot(current-butter)):
+            world(current-waffle, current-students, butter(center-butter(position), up, true), current-items, time-since-item-spawn)
+          else if (key == "down") and not(extract-butter-beenshot(current-butter)):
+            world(current-waffle, current-students, butter(center-butter(position), down, true), current-items, time-since-item-spawn)
+          else if (key == "left") and not(extract-butter-beenshot(current-butter)):
+            world(current-waffle, current-students, butter(center-butter(position), left, true), current-items, time-since-item-spawn)
+          else if (key == "right") and not(extract-butter-beenshot(current-butter)):
+            world(current-waffle, current-students, butter(center-butter(position), right, true), current-items, time-since-item-spawn)
+          else:
+            current-world
+          end
+      end
+  end
+where:
+  key-world(INITIAL-WORLD, "w") is world(
+    waffle(posn(-400, -290), 2, 0), 
+    [list: 
+      student(posn(0, -100), right, true), 
+      student(posn(-800, -100), left, true), 
+      student(posn(0, -500), right, true), 
+      student(posn(-800, -500), left, true)], 
+    butter(posn(0, 0), right, false),
+    [list: 
+      flyer(posn(-100, -100)), 
+      flyer(posn(-700, -100)), 
+      flyer(posn(-100, -500)), 
+      flyer(posn(-700, -500))],
+    0)
+  key-world(INITIAL-WORLD, "s") is world(
+    waffle(posn(-400, -310), 2, 0), 
+    [list: 
+      student(posn(0, -100), right, true), 
+      student(posn(-800, -100), left, true), 
+      student(posn(0, -500), right, true), 
+      student(posn(-800, -500), left, true)], 
+    butter(posn(0, 0), right, false),
+    [list: 
+      flyer(posn(-100, -100)), 
+      flyer(posn(-700, -100)), 
+      flyer(posn(-100, -500)), 
+      flyer(posn(-700, -500))],
+    0)
+  key-world(INITIAL-WORLD, "a") is world(
+    waffle(posn(-390, -300), 2, 0), 
+    [list: 
+      student(posn(0, -100), right, true), 
+      student(posn(-800, -100), left, true), 
+      student(posn(0, -500), right, true), 
+      student(posn(-800, -500), left, true)], 
+    butter(posn(0, 0), right, false),
+    [list: 
+      flyer(posn(-100, -100)), 
+      flyer(posn(-700, -100)), 
+      flyer(posn(-100, -500)), 
+      flyer(posn(-700, -500))],
+    0)
+  key-world(INITIAL-WORLD, "d") is world(
+    waffle(posn(-410, -300), 2, 0), 
+    [list: 
+      student(posn(0, -100), right, true), 
+      student(posn(-800, -100), left, true), 
+      student(posn(0, -500), right, true), 
+      student(posn(-800, -500), left, true)], 
+    butter(posn(0, 0), right, false),
+    [list: 
+      flyer(posn(-100, -100)), 
+      flyer(posn(-700, -100)), 
+      flyer(posn(-100, -500)), 
+      flyer(posn(-700, -500))],
+    0)
+  key-world(INITIAL-WORLD, "up") is world(
+    waffle(posn(-400, -300), 2, 0), 
+    [list:
+      student(posn(0, -100), right, true),
+      student(posn(-800, -100), left, true),
+      student(posn(0, -500), right, true),
+      student(posn(-800, -500), left, true)],
+    butter(posn(-440, -340), up, true),
+    [list: 
+      flyer(posn(-100, -100)), 
+      flyer(posn(-700, -100)),
+      flyer(posn(-100, -500)), 
+      flyer(posn(-700, -500))],
+    0)
+  key-world(INITIAL-WORLD, "down") is world(
+    waffle(posn(-400, -300), 2, 0), 
+    [list:
+      student(posn(0, -100), right, true),
+      student(posn(-800, -100), left, true),
+      student(posn(0, -500), right, true),
+      student(posn(-800, -500), left, true)],
+    butter(posn(-440, -340), down, true),
+    [list: 
+      flyer(posn(-100, -100)), 
+      flyer(posn(-700, -100)),
+      flyer(posn(-100, -500)), 
+      flyer(posn(-700, -500))],
+    0)
+  key-world(INITIAL-WORLD, "left") is world(
+    waffle(posn(-400, -300), 2, 0), 
+    [list:
+      student(posn(0, -100), right, true),
+      student(posn(-800, -100), left, true),
+      student(posn(0, -500), right, true),
+      student(posn(-800, -500), left, true)],
+    butter(posn(-440, -340), left, true),
+    [list: 
+      flyer(posn(-100, -100)), 
+      flyer(posn(-700, -100)),
+      flyer(posn(-100, -500)), 
+      flyer(posn(-700, -500))],
+    0)
+  key-world(INITIAL-WORLD, "right") is world(
+    waffle(posn(-400, -300), 2, 0), 
+    [list:
+      student(posn(0, -100), right, true),
+      student(posn(-800, -100), left, true),
+      student(posn(0, -500), right, true),
+      student(posn(-800, -500), left, true)],
+    butter(posn(-440, -340), right, true),
+    [list: 
+      flyer(posn(-100, -100)), 
+      flyer(posn(-700, -100)),
+      flyer(posn(-100, -500)), 
+      flyer(posn(-700, -500))],
+    0)
+end
+#KEY
+
+#TICK
+fun spawn-student() -> Student:
+  doc: "spawn a new student"
+  r :: Number = random(4)
+  if r == 0: student(posn(0, -100), right, true)
+  else if r == 1: student(posn(0, -500), right, true)
+  else if r == 2: student(posn(-800, -100), left, true)
+  else if r == 3: student(posn(-800, -500), left, true)
+  end
+end
+
+fun random-direction() -> Direction:
+  doc: "pick a random direction"
+  r :: Number = random(4)
+  if r == 0: up
+  else if r == 1: down
+  else if r == 2: left
+  else if r == 3: right
+  end
+end
+
+fun spawn-flyer(current-items :: List<Item>) -> List<Item>:
+  doc: "spawn a new flyer if one is needed"
+  if length(just-flyers(current-items)) < 4:
+    if not(contains(
+          lam(first-item :: Item) -> Boolean:
+            (extract-x(extract-item-posn(first-item)) == (-1 * SIDE)) and
+            (extract-y(extract-item-posn(first-item)) == (-1 * SIDE))
+          end,
+          current-items)):
+      link(flyer(posn(-1 * SIDE, -1 * SIDE)), current-items)
+    else if not(contains(
+          lam(first-item :: Item) -> Boolean:
+            (extract-x(extract-item-posn(first-item)) == (-7 * SIDE)) and
+            (extract-y(extract-item-posn(first-item)) == (-1 * SIDE))
+          end,
+          current-items)):
+      link(flyer(posn(-7 * SIDE, -1 * SIDE)), current-items)
+    else if not(contains(
+          lam(first-item :: Item) -> Boolean:
+            (extract-x(extract-item-posn(first-item)) == (-1 * SIDE)) and
+            (extract-y(extract-item-posn(first-item)) == (-5 * SIDE))
+          end,
+          current-items)):
+      link(flyer(posn(-1 * SIDE, -5 * SIDE)), current-items)
+    else if not(contains(
+          lam(first-item :: Item) -> Boolean:
+            (extract-x(extract-item-posn(first-item)) == (-7 * SIDE)) and
+            (extract-y(extract-item-posn(first-item)) == (-5 * SIDE))
+          end,
+          current-items)):
+      link(flyer(posn(-7 * SIDE, -5 * SIDE)), current-items)
+    else: current-items
+    end
+  else: current-items
+  end
+where:
+  spawn-flyer(
+    [list: syrup(posn(-400, -300)),
+      flyer(posn(-100, -100)),
+      flyer(posn(-700, -100)),
+      flyer(posn(-100, -500)),
+      flyer(posn(-700, 500))]) is
+  [list: syrup(posn(-400, -300)),
+    flyer(posn(-100, -100)),
+    flyer(posn(-700, -100)),
+    flyer(posn(-100, -500)),
+    flyer(posn(-700, 500))]
+  spawn-flyer(
+    [list: syrup(posn(-400, -300)),
+      flyer(posn(-700, -100)),
+      flyer(posn(-100, -500)),
+      flyer(posn(-700, 500))]) is
+  [list: flyer(posn(-100, -100)),
+    syrup(posn(-400, -300)),
+    flyer(posn(-700, -100)),
+    flyer(posn(-100, -500)),
+    flyer(posn(-700, 500))]
+  spawn-flyer(
+    [list: syrup(posn(-400, -300)),
+      flyer(posn(-100, -100)),
+      flyer(posn(-100, -500)),
+      flyer(posn(-700, 500))]) is
+  [list: flyer(posn(-700, -100)),
+    syrup(posn(-400, -300)),
+    flyer(posn(-100, -100)),
+    flyer(posn(-100, -500)),
+    flyer(posn(-700, 500))]
+  spawn-flyer(
+    [list: syrup(posn(-400, -300)),
+      flyer(posn(-100, -100)),
+      flyer(posn(-700, -100)),
+      flyer(posn(-700, 500))]) is
+  [list: flyer(posn(-100, -500)),
+    syrup(posn(-400, -300)),
+    flyer(posn(-100, -100)),
+    flyer(posn(-700, -100)),
+    flyer(posn(-700, 500))]
+  spawn-flyer(
+    [list: syrup(posn(-400, -300)),
+      flyer(posn(-100, -100)),
+      flyer(posn(-700, -100)),
+      flyer(posn(-100, -500))]) is
+  [list: flyer(posn(-700, -500)),
+    syrup(posn(-400, -300)),
+    flyer(posn(-100, -100)),
+    flyer(posn(-700, -100)),
+    flyer(posn(-100, -500))]
+end
+
+fun student-hit-wall(student-direction :: Direction, student-posn :: Position) -> Boolean:
+  doc: "determine if a student has hit a wall"
+  if (student-direction == up) and ((extract-y(student-posn) == (-1 * SIDE)) or 
+      (not(extract-x(student-posn) == (-1 * SIDE)) and
+        not(extract-x(student-posn) == (-4 * SIDE)) and
+        not(extract-x(student-posn) == (-7 * SIDE)))): true
+  else if (student-direction == down) and ((extract-y(student-posn) == (-5 * SIDE)) or 
+      (not(extract-x(student-posn) == (-1 * SIDE)) and
+        not(extract-x(student-posn) == (-4 * SIDE)) and
+        not(extract-x(student-posn) == (-7 * SIDE)))): true
+  else if (student-direction == left) and ((extract-x(student-posn) == (-1 * SIDE)) or
+      (not(extract-y(student-posn) == (-1 * SIDE)) and
+        not(extract-y(student-posn) == (-3 * SIDE)) and
+        not(extract-y(student-posn) == (-5 * SIDE)))): true
+  else if (student-direction == right) and ((extract-x(student-posn) == (-7 * SIDE)) or
+      (not(extract-y(student-posn) == (-1 * SIDE)) and
+        not(extract-y(student-posn) == (-3 * SIDE)) and
+        not(extract-y(student-posn) == (-5 * SIDE)))): true
+  else: false
+  end
+where:
+  student-hit-wall(up, posn(-100, -100)) is true
+  student-hit-wall(up, posn(-700, -500)) is false
+  student-hit-wall(down, posn(-100, -100)) is false
+  student-hit-wall(down, posn(-700, -500)) is true
+  student-hit-wall(left, posn(-100, -100)) is true
+  student-hit-wall(left, posn(-700, -500)) is false
+  student-hit-wall(right, posn(-100, -100)) is false
+  student-hit-wall(right, posn(-700, -500)) is true
+end
+
+fun students-stuck(waffle-posn :: Position, current-students :: List<Student>) -> List<Student>:
+  doc: "checks every student in a list to see if any is stuck, redirecting them if so"
+  map(lam(current-student :: Student) -> Student:
+      cases (Student) current-student:
+        | student(student-posn, student-direction, chase-waffle) =>
+          if ((extract-x(student-posn) == extract-x(waffle-posn)) and
+              (extract-y(student-posn) < extract-y(waffle-posn)) and
+              student-hit-wall(up, student-posn)) or
+            ((extract-x(student-posn) == extract-x(waffle-posn)) and
+              (extract-y(student-posn) > extract-y(waffle-posn)) and
+              student-hit-wall(down, student-posn)) or
+            ((extract-y(student-posn) == extract-y(waffle-posn)) and
+              (extract-x(student-posn) < extract-x(waffle-posn)) and
+              student-hit-wall(left, student-posn)) or
+            ((extract-y(student-posn) == extract-y(waffle-posn)) and
+              (extract-x(student-posn) > extract-x(waffle-posn)) and
+              student-hit-wall(right, student-posn)):
+            student(student-posn, student-direction, false)
+          else:
+            current-student
+          end
+      end
+    end,
+    current-students)
+where: 
+  students-stuck(
+    posn(-100, -200),
+    [list:
+      student(posn(-100, -400), up, true),
+      student(posn(-400, -200), left, true)]) is
+  [list:
+    student(posn(-100, -400), up, true),
+    student(posn(-400, -200), left, false)]
+  students-stuck(
+    posn(-700, -200),
+    [list:
+      student(posn(-700, -400), up, true),
+      student(posn(-400, -200), right, true)]) is
+  [list:
+    student(posn(-700, -400), up, true),
+    student(posn(-400, -200), right, false)]
+end
+
+fun students-pathfind(waffle-posn :: Position, current-students :: List<Student>) -> List<Student>:
+  doc: "redirect a list of students based on the waffle's position"
+  map(lam(current-student :: Student) -> Student:
+      cases (Student) current-student:
+        | student(student-posn, student-direction, chase-waffle) =>
+          if chase-waffle:
+            if student-hit-wall(student-direction, student-posn):
+              if not(student-hit-wall(up, student-posn)) and (extract-y(waffle-posn) > extract-y(student-posn)):
+                student(student-posn, up, true)
+              else if not(student-hit-wall(down, student-posn)) and (extract-y(waffle-posn) < extract-y(student-posn)):
+                student(student-posn, down, true)
+              else if not(student-hit-wall(left, student-posn)) and (extract-x(waffle-posn) > extract-x(student-posn)):
+                student(student-posn, left, true)
+              else if not(student-hit-wall(right, student-posn)) and (extract-x(waffle-posn) < extract-x(student-posn)):
+                student(student-posn, right, true)
+              else:
+                current-student
+              end
+            else if not(student-hit-wall(up, student-posn)) and (extract-y(waffle-posn) > extract-y(student-posn)):
+              student(student-posn, up, true)
+            else if not(student-hit-wall(down, student-posn)) and (extract-y(waffle-posn) < extract-y(student-posn)):
+              student(student-posn, down, true)
+            else if not(student-hit-wall(left, student-posn)) and (extract-x(waffle-posn) > extract-x(student-posn)):
+              student(student-posn, left, true)
+            else if not(student-hit-wall(right, student-posn)) and (extract-x(waffle-posn) < extract-x(student-posn)):
+              student(student-posn, right, true)
+            else:
+              current-student
+            end
+          else:
+            if not(student-hit-wall(up, student-posn)) and ((-3 * SIDE) > extract-y(student-posn)):
+              student(student-posn, up, false)
+            else if not(student-hit-wall(down, student-posn)) and ((-3 * SIDE) < extract-y(student-posn)):
+              student(student-posn, down, false)
+            else if not(student-hit-wall(left, student-posn)) and ((-4 * SIDE) > extract-x(student-posn)):
+              student(student-posn, left, false)
+            else if not(student-hit-wall(right, student-posn)) and ((-4 * SIDE) < extract-x(student-posn)):
+              student(student-posn, right, false)
+            else if (extract-x(student-posn) == (-4 * SIDE)) and (extract-y(student-posn) == (-3 * SIDE)):
+              student(student-posn, random-direction(), true)
+            end
+          end
+      end
+    end,
+    current-students)
+where:
+  students-pathfind(
+    posn(-400, -300),
+    [list:
+      student(posn(-100, -500), down, true)]) is
+  [list:
+    student(posn(-100, -500), up, true)]
+  students-pathfind(
+    posn(-400, -300),
+    [list:
+      student(posn(-100, -100), up, true)]) is
+  [list:
+    student(posn(-100, -100), down, true)]
+  students-pathfind(
+    posn(-400, -300),
+    [list:
+      student(posn(-500, -100), right, true)]) is
+  [list:
+    student(posn(-500, -100), left, true)]
+  students-pathfind(
+    posn(-400, -300),
+    [list:
+      student(posn(-300, -100), left, true)]) is
+  [list:
+    student(posn(-300, -100), right, true)]
+end
+
+fun student-hit-waffle(current-waffle :: Waffle, current-students :: List<Student>) -> Boolean:
+  doc: "determine if a student has hit the waffle"
+  contains(
+    lam(current-student :: Student) -> Boolean:
+      cases (Student) current-student:
+        | student(student-posn, student-direction, chase-waffle) =>
+          if (student-direction == up) and (extract-y(student-posn) == (extract-y(extract-waffle-posn(current-waffle)) - SIDE))
+            and (extract-x(student-posn) == extract-x(extract-waffle-posn(current-waffle))): true
+          else if (student-direction == down) and (extract-y(student-posn) == (extract-y(extract-waffle-posn(current-waffle)) + SIDE))
+            and (extract-x(student-posn) == extract-x(extract-waffle-posn(current-waffle))): true
+          else if (student-direction == left) and (extract-x(student-posn) == (extract-x(extract-waffle-posn(current-waffle)) - SIDE)) 
+            and (extract-y(student-posn) == extract-y(extract-waffle-posn(current-waffle))): true
+          else if (student-direction == right) and (extract-x(student-posn) == (extract-x(extract-waffle-posn(current-waffle)) + SIDE)) 
+            and (extract-y(student-posn) == extract-y(extract-waffle-posn(current-waffle))): true
+          else if ((extract-x(extract-waffle-posn(current-waffle)) == extract-x(student-posn)) and 
+              (((extract-y(extract-waffle-posn(current-waffle)) > extract-y(student-posn)) and
+                  (((extract-y(extract-waffle-posn(current-waffle)) - SIDE) < extract-y(student-posn)))) or
+                ((extract-y(extract-waffle-posn(current-waffle)) < extract-y(student-posn)) and
+                  (((extract-y(extract-waffle-posn(current-waffle)) + SIDE) > extract-y(student-posn)))))): true
+          else if ((extract-y(extract-waffle-posn(current-waffle)) == extract-y(student-posn)) and 
+              (((extract-x(extract-waffle-posn(current-waffle)) > extract-x(student-posn)) and
+                  (((extract-x(extract-waffle-posn(current-waffle)) - SIDE) < extract-x(student-posn)))) or
+                ((extract-x(extract-waffle-posn(current-waffle)) < extract-x(student-posn)) and
+                  (((extract-x(extract-waffle-posn(current-waffle)) + SIDE) > extract-x(student-posn)))))): true
+          else: false
+          end
+      end
+    end,
+    current-students)
+where:
+  student-hit-waffle(
+    waffle(posn(-400, -300), 2, 0),
+    [list:
+      student(posn(-400, -400), up, true)]) is true
+  student-hit-waffle(
+    waffle(posn(-400, -300), 2, 0),
+    [list:
+      student(posn(-400, -200), down, true)]) is true
+  student-hit-waffle(
+    waffle(posn(-400, -300), 2, 0),
+    [list:
+      student(posn(-500, -300), left, true)]) is true
+  student-hit-waffle(
+    waffle(posn(-400, -300), 2, 0),
+    [list:
+      student(posn(-300, -300), right, true)]) is true
+  student-hit-waffle(
+    waffle(posn(-400, -300), 2, 0),
+    [list:
+      student(posn(-100, -100), down, true)]) is false
+end
+
+fun remove-students-waffle(current-waffle :: Waffle, current-students :: List<Student>) -> List<Student>:
+  doc: "remove students that have touched the waffle"
+  cases (List<Student>) current-students:
+    | empty => current-students
+    | link(first-student, rest-students) =>
+      cases (Student) first-student:
+        | student(student-posn, student-direction, chase-waffle) =>
+          cases (Waffle) current-waffle:
+            | waffle(waffle-posn, health, times-hit) =>
+              if (((student-direction == up) and (extract-y(student-posn) == (extract-y(extract-waffle-posn(current-waffle)) - SIDE))
+                    and (extract-x(student-posn) == extract-x(extract-waffle-posn(current-waffle)))) or
+                  (((student-direction == down) and (extract-y(student-posn) == (extract-y(extract-waffle-posn(current-waffle)) + SIDE))) 
+                    and (extract-x(student-posn) == extract-x(extract-waffle-posn(current-waffle)))) or
+                  (((student-direction == left) and (extract-x(student-posn) == (extract-x(extract-waffle-posn(current-waffle)) - SIDE)))
+                    and (extract-y(student-posn) == extract-y(extract-waffle-posn(current-waffle)))) or
+                  (((student-direction == right) and (extract-x(student-posn) == (extract-x(extract-waffle-posn(current-waffle)) + SIDE)))
+                    and (extract-y(student-posn) == extract-y(extract-waffle-posn(current-waffle)))) or
+                  ((extract-x(extract-waffle-posn(current-waffle)) == extract-x(student-posn)) and
+                    ((extract-y(extract-waffle-posn(current-waffle)) == extract-x(student-posn))))) or
+                ((extract-x(extract-waffle-posn(current-waffle)) == extract-x(student-posn)) and 
+                  (((extract-y(extract-waffle-posn(current-waffle)) > extract-y(student-posn)) and
+                      (((extract-y(extract-waffle-posn(current-waffle)) - SIDE) < extract-y(student-posn)))) or
+                    ((extract-y(extract-waffle-posn(current-waffle)) < extract-y(student-posn)) and
+                      (((extract-y(extract-waffle-posn(current-waffle)) + SIDE) > extract-y(student-posn)))))) or
+                ((extract-y(extract-waffle-posn(current-waffle)) == extract-y(student-posn)) and 
+                  (((extract-x(extract-waffle-posn(current-waffle)) > extract-x(student-posn)) and
+                      (((extract-x(extract-waffle-posn(current-waffle)) - SIDE) < extract-x(student-posn)))) or
+                    ((extract-x(extract-waffle-posn(current-waffle)) < extract-x(student-posn)) and
+                      (((extract-x(extract-waffle-posn(current-waffle)) + SIDE) > extract-x(student-posn)))))):
+                remove-students-waffle(current-waffle, rest-students)
+              else:
+                link(first-student, remove-students-waffle(current-waffle, rest-students))
+              end
+          end
+      end
+  end
+where:
+  remove-students-waffle(
+    waffle(posn(-400, -300), 2, 0),
+    [list:
+      student(posn(-400, -400), up, true)]) is empty
+  remove-students-waffle(
+     waffle(posn(-400, -300), 2, 0),
+    [list:
+      student(posn(-400, -200), down, true)]) is empty
+  remove-students-waffle(
+     waffle(posn(-400, -300), 2, 0),
+    [list:
+      student(posn(-500, -300), left, true)]) is empty
+  remove-students-waffle(
+     waffle(posn(-400, -300), 2, 0),
+    [list:
+      student(posn(-300, -300), right, true)]) is empty
+  remove-students-waffle(
+     waffle(posn(-400, -300), 2, 0),
+    [list:
+      student(posn(-100, -100), down, true)]) is [list: student(posn(-100, -100), down, true)]
+end
+   
+fun butter-hit-student(current-butter :: Butter, current-students :: List<Student>) -> Boolean:
+  doc: "determine if a butter has hit a student"
+  cases (Butter) current-butter:
+    | butter(butter-posn, butter-direction, beenshot) =>
+      contains(
+        lam(current-student :: Student) -> Boolean:
+          if (butter-direction == up) and (extract-y(butter-posn) == (extract-y(extract-student-posn(current-student)) - SIDE)) and 
+            (extract-x(butter-posn) <= extract-x(extract-student-posn(current-student))) and (extract-x(butter-posn) >= 
+              (extract-x(extract-student-posn(current-student)) - (SIDE + (SIDE / 5)))): true
+          else if (butter-direction == down) and (extract-y(butter-posn) == (extract-y(extract-student-posn(current-student)) + (SIDE / 5))) and
+            (extract-x(butter-posn) <= extract-x(extract-student-posn(current-student))) and (extract-x(butter-posn) >= 
+              (extract-x(extract-student-posn(current-student)) - (SIDE + (SIDE / 5)))): true
+          else if (butter-direction == left) and (extract-x(butter-posn) == (extract-x(extract-student-posn(current-student)) - SIDE)) and
+            (extract-y(butter-posn) <= extract-y(extract-student-posn(current-student))) and (extract-y(butter-posn) >= 
+              (extract-y(extract-student-posn(current-student)) - (SIDE + (SIDE / 5)))): true
+          else if (butter-direction == right) and (extract-x(butter-posn) == (extract-x(extract-student-posn(current-student)) + (SIDE / 5))) and
+            (extract-y(butter-posn) <= extract-y(extract-student-posn(current-student))) and (extract-y(butter-posn) >= 
+              (extract-y(extract-student-posn(current-student)) - (SIDE + (SIDE / 5)))): true
+          else if ((extract-x(extract-student-posn(current-student)) > extract-x(butter-posn)) and
+              ((extract-x(extract-student-posn(current-student)) - SIDE) < extract-x(butter-posn)) and
+              (extract-y(extract-student-posn(current-student)) > extract-y(butter-posn)) and
+              ((extract-y(extract-student-posn(current-student)) - SIDE) < extract-y(butter-posn))): true
+          else: false
+          end
+        end,
+        current-students)
+  end
+where:
+  butter-hit-student(
+    butter(posn(-400, -400), up, true),
+    [list:
+      student(posn(-400, -300), down, true)]) is true
+  butter-hit-student(
+    butter(posn(-400, -300 + (SIDE / 5)), down, true),
+    [list:
+      student(posn(-400, -300), down, true)]) is true
+  butter-hit-student(
+    butter(posn(-500, -300), left, true),
+    [list:
+      student(posn(-400, -300), down, true)]) is true
+  butter-hit-student(
+    butter(posn(-400 + (SIDE / 5), -300), right, true),
+    [list:
+      student(posn(-400, -300), down, true)]) is true
+  butter-hit-student(
+    butter(posn(-100, -100), up, true),
+    [list:
+      student(posn(-400, -300), down, true)]) is false
+end
+
+fun remove-students-butter(current-butter :: Butter, current-students :: List<Student>) -> List<Student>:
+  doc: "remove students that have touched the butter"
+  cases (List<Student>) current-students:
+    | empty => current-students
+    | link(first-student, rest-students) =>
+      cases (Butter) current-butter:
+        | butter(butter-posn, butter-direction, beenshot) =>
+          if (((butter-direction == up) and (extract-y(butter-posn) == (extract-y(extract-student-posn(first-student)) - SIDE)) and 
+                (extract-x(butter-posn) <= extract-x(extract-student-posn(first-student))) and (extract-x(butter-posn) >= 
+                  (extract-x(extract-student-posn(first-student)) - (SIDE + (SIDE / 5))))) or
+              ((butter-direction == down) and (extract-y(butter-posn) == (extract-y(extract-student-posn(first-student)) + (SIDE / 5))) and
+                (extract-x(butter-posn) <= extract-x(extract-student-posn(first-student))) and (extract-x(butter-posn) >= 
+                  (extract-x(extract-student-posn(first-student)) - (SIDE + (SIDE / 5))))) or
+              ((butter-direction == left) and (extract-x(butter-posn) == (extract-x(extract-student-posn(first-student)) - SIDE)) and
+                (extract-y(butter-posn) <= extract-y(extract-student-posn(first-student))) and (extract-y(butter-posn) >= 
+                  (extract-y(extract-student-posn(first-student)) - (SIDE + (SIDE / 5))))) or
+              ((butter-direction == right) and (extract-x(butter-posn) == (extract-x(extract-student-posn(first-student)) + (SIDE / 5))) and
+                (extract-y(butter-posn) <= extract-y(extract-student-posn(first-student))) and (extract-y(butter-posn) >= 
+                  (extract-y(extract-student-posn(first-student)) - (SIDE + (SIDE / 5)))))) or
+            ((extract-x(extract-student-posn(first-student)) > extract-x(butter-posn)) and
+              ((extract-x(extract-student-posn(first-student)) - SIDE) < extract-x(butter-posn)) and
+              (extract-y(extract-student-posn(first-student)) > extract-y(butter-posn)) and
+              ((extract-y(extract-student-posn(first-student)) - SIDE) < extract-y(butter-posn))): 
+            remove-students-butter(current-butter, rest-students)
+          else:
+            link(first-student, remove-students-butter(current-butter, rest-students))
+          end
+      end
+  end
+where:
+  remove-students-butter(
+    butter(posn(-400, -400), up, true),
+    [list:
+      student(posn(-400, -300), down, true)]) is empty
+  remove-students-butter(
+    butter(posn(-400, -300 + (SIDE / 5)), down, true),
+    [list:
+      student(posn(-400, -300), down, true)]) is empty
+  remove-students-butter(
+    butter(posn(-500, -300), left, true),
+    [list:
+      student(posn(-400, -300), down, true)]) is empty
+ remove-students-butter(
+    butter(posn(-400 + (SIDE / 5), -300), right, true),
+    [list:
+      student(posn(-400, -300), down, true)]) is empty
+  remove-students-butter(
+    butter(posn(-100, -100), up, true),
+    [list:
+      student(posn(-400, -300), down, true)]) is [list: student(posn(-400, -300), down, true)]
+end
+
+fun waffle-hit-item(current-waffle :: Waffle, current-items :: List<Item>) -> Boolean:
+  doc: "determine if a butter has hit a student"
+  contains(
+    lam(current-item :: Item) -> Boolean:
+      if (extract-y(extract-item-posn(current-item)) > extract-y(extract-waffle-posn(current-waffle))) and 
+        (extract-x(extract-item-posn(current-item)) == extract-x(extract-waffle-posn(current-waffle))) and
+        ((extract-y(extract-item-posn(current-item)) - SIDE) <= extract-y(extract-waffle-posn(current-waffle))): true
+      else if (extract-y(extract-item-posn(current-item)) < extract-y(extract-waffle-posn(current-waffle))) and
+        (extract-x(extract-item-posn(current-item)) == extract-x(extract-waffle-posn(current-waffle))) and
+        ((extract-y(extract-item-posn(current-item)) + SIDE) >= extract-y(extract-waffle-posn(current-waffle))): true
+      else if (extract-x(extract-item-posn(current-item)) > extract-x(extract-waffle-posn(current-waffle))) and
+        (extract-y(extract-item-posn(current-item)) == extract-y(extract-waffle-posn(current-waffle))) and
+        ((extract-x(extract-item-posn(current-item)) - SIDE) <= extract-x(extract-waffle-posn(current-waffle))): true
+      else if (extract-x(extract-item-posn(current-item)) < extract-x(extract-waffle-posn(current-waffle))) and
+        (extract-y(extract-item-posn(current-item)) == extract-y(extract-waffle-posn(current-waffle))) and
+        ((extract-x(extract-item-posn(current-item)) + SIDE) >= extract-x(extract-waffle-posn(current-waffle))): true
+      else: false
+      end
+    end,
+    current-items)
+where:
+  waffle-hit-item(
+    waffle(posn(-400, -400), 2, 0),
+    [list:
+      syrup(posn(-400, -300))]) is true
+  waffle-hit-item(
+    waffle(posn(-400, -200), 2, 0),
+    [list:
+      syrup(posn(-400, -300))]) is true
+  waffle-hit-item(
+    waffle(posn(-300, -300), 2, 0),
+    [list:
+      syrup(posn(-400, -300))]) is true
+  waffle-hit-item(
+    waffle(posn(-500, -300), 2, 0),
+    [list:
+      syrup(posn(-400, -300))]) is true
+  waffle-hit-item(
+    waffle(posn(-100, -100), 2, 0),
+    [list:
+      syrup(posn(-400, -300))]) is false
+end
+
+fun remove-items(current-waffle :: Waffle, current-items :: List<Item>) -> List<Item>:
+  doc: "remove students that have touched the butter"
+  cases (List<Item>) current-items:
+    | empty => empty
+    | link(first-item, rest-items) =>
+      cases (Item) first-item:
+        | syrup(syrup-posn) =>
+          if ((extract-y(syrup-posn) > extract-y(extract-waffle-posn(current-waffle))) and 
+              (extract-x(syrup-posn) == extract-x(extract-waffle-posn(current-waffle))) and
+              ((extract-y(syrup-posn) - SIDE) <= extract-y(extract-waffle-posn(current-waffle)))) or
+            ((extract-y(syrup-posn) < extract-y(extract-waffle-posn(current-waffle))) and
+              (extract-x(syrup-posn) == extract-x(extract-waffle-posn(current-waffle))) and
+              ((extract-y(syrup-posn) + SIDE) >= extract-y(extract-waffle-posn(current-waffle)))) or
+            ((extract-x(syrup-posn) > extract-x(extract-waffle-posn(current-waffle))) and
+              (extract-y(syrup-posn) == extract-y(extract-waffle-posn(current-waffle))) and
+              ((extract-x(syrup-posn) - SIDE) <= extract-x(extract-waffle-posn(current-waffle)))) or
+            ((extract-x(syrup-posn) < extract-x(extract-waffle-posn(current-waffle))) and
+              (extract-y(syrup-posn) == extract-y(extract-waffle-posn(current-waffle))) and
+              ((extract-x(syrup-posn) + SIDE) >= extract-x(extract-waffle-posn(current-waffle)))):
+            remove-items(current-waffle, rest-items)
+          else:
+            link(first-item, remove-items(current-waffle, rest-items))
+          end
+        | flyer(flyer-posn) =>
+          if ((extract-y(flyer-posn) > extract-y(extract-waffle-posn(current-waffle))) and 
+              (extract-x(flyer-posn) == extract-x(extract-waffle-posn(current-waffle))) and
+              ((extract-y(flyer-posn) - SIDE) <= extract-y(extract-waffle-posn(current-waffle)))) or
+            ((extract-y(flyer-posn) < extract-y(extract-waffle-posn(current-waffle))) and
+              (extract-x(flyer-posn) == extract-x(extract-waffle-posn(current-waffle))) and
+              ((extract-y(flyer-posn) + SIDE) >= extract-y(extract-waffle-posn(current-waffle)))) or
+            ((extract-x(flyer-posn) > extract-x(extract-waffle-posn(current-waffle))) and
+              (extract-y(flyer-posn) == extract-y(extract-waffle-posn(current-waffle))) and
+              ((extract-x(flyer-posn) - SIDE) <= extract-x(extract-waffle-posn(current-waffle)))) or
+            ((extract-x(flyer-posn) < extract-x(extract-waffle-posn(current-waffle))) and
+              (extract-y(flyer-posn) == extract-y(extract-waffle-posn(current-waffle))) and
+              ((extract-x(flyer-posn) + SIDE) >= extract-x(extract-waffle-posn(current-waffle)))):
+            remove-items(current-waffle, rest-items)
+          else:
+            link(first-item, remove-items(current-waffle, rest-items))
+          end
+      end
+  end
+where:
+  remove-items(
+    waffle(posn(-400, -400), 2, 0),
+    [list:
+      syrup(posn(-400, -300))]) is empty
+  remove-items(
+    waffle(posn(-400, -200), 2, 0),
+    [list:
+      syrup(posn(-400, -300))]) is empty
+  remove-items(
+    waffle(posn(-300, -300), 2, 0),
+    [list:
+      syrup(posn(-400, -300))]) is empty
+  remove-items(
+    waffle(posn(-500, -300), 2, 0),
+    [list:
+      syrup(posn(-400, -300))]) is empty
+  remove-items(
+    waffle(posn(-100, -100), 2, 0),
+    [list:
+      syrup(posn(-400, -300))]) is [list: syrup(posn(-400, -300))]
+end
+
+fun tick-students(current-students :: List<Student>) -> List<Student>:
+  doc: "change the students with each tick"
+  cases (List<Student>) current-students:
+    | empty => empty
+    | link(first-student, rest-students) =>
+      cases (Student) first-student:
+        | student(student-posn, student-direction, chase-waffle) =>
+          if student-direction == up:
+            link(student(posn(extract-x(student-posn), extract-y(student-posn) + (SIDE / 40)), 
+                up, chase-waffle), tick-students(rest-students))
+          else if student-direction == down:
+            link(student(posn(extract-x(student-posn), extract-y(student-posn) - (SIDE / 40)), 
+                down, chase-waffle), tick-students(rest-students))
+          else if student-direction == left:
+            link(student(posn(extract-x(student-posn) + (SIDE / 40), extract-y(student-posn)), 
+                left, chase-waffle), tick-students(rest-students))
+          else if student-direction == right:
+            link(student(posn(extract-x(student-posn) - (SIDE / 40), extract-y(student-posn)), 
+                right, chase-waffle), tick-students(rest-students))
+          end
+      end
+  end
+where:
+  tick-students(
+    [list: student(posn(-400, -300), up, true)]) is 
+  [list: student(posn(-400, -300 + (SIDE / 40)), up, true)]
+  tick-students(
+    [list: student(posn(-400, -300), down, true)]) is 
+  [list: student(posn(-400, -300 - (SIDE / 40)), down, true)]
+  tick-students(
+    [list: student(posn(-400, -300), left, true)]) is 
+  [list: student(posn(-400 + (SIDE / 40), -300), left, true)]
+  tick-students(
+    [list: student(posn(-400, -300), right, true)]) is 
+  [list: student(posn(-400 - (SIDE / 40), -300), right, true)]
+end
+
+fun tick-butter(current-butter :: Butter) -> Butter:
+  doc: "change a butter with each tick"
+  cases (Butter) current-butter:
+    | butter(position, direction, beenshot) =>
+      if (direction == up) and extract-butter-beenshot(current-butter):
+        butter(posn(extract-x(position), extract-y(position) + (SIDE / 10)), up, beenshot)
+      else if (direction == down) and extract-butter-beenshot(current-butter):
+        butter(posn(extract-x(position), extract-y(position) - (SIDE / 10)), down, beenshot)
+      else if (direction == left) and extract-butter-beenshot(current-butter):
+        butter(posn(extract-x(position) + (SIDE / 10), extract-y(position)), left, beenshot)
+      else if (direction == right) and extract-butter-beenshot(current-butter):
+        butter(posn(extract-x(position) - (SIDE / 10), extract-y(position)), right, beenshot)
+      else:
+        current-butter
+      end
+  end
+where:
+  tick-butter(butter(posn(-100, -100), up, true)) is butter(posn(-100, -90), up, true)
+  tick-butter(butter(posn(-100, -100), down, true)) is butter(posn(-100, -110), down, true)
+  tick-butter(butter(posn(-100, -100), left, true)) is butter(posn(-90, -100), left, true)
+  tick-butter(butter(posn(-100, -100), right, true)) is butter(posn(-110, -100), right, true)
+  tick-butter(butter(posn(-100, -100), up, false)) is butter(posn(-100, -100), up, false)
+end
+
+fun butter-hit-wall(butter-direction :: Direction, butter-posn :: Position) -> Boolean:
+  doc: "determine if a butter has hit a wall"
+  if (butter-direction == up) and (extract-y(butter-posn) == 0):
+    true
+  else if (butter-direction == down) and (extract-y(butter-posn) == ((-7 * SIDE) + (SIDE / 5))):
+    true
+  else if (butter-direction == left) and (extract-x(butter-posn) == 0):
+    true
+  else if (butter-direction == right) and (extract-x(butter-posn) == ((-9 * SIDE) + (SIDE / 5))):
+    true
+  else:
+    false
+  end
+where:
+  butter-hit-wall(up, posn(-400, 0)) is true
+  butter-hit-wall(up, posn(-400, -400)) is false
+  butter-hit-wall(down, posn(-400, -680)) is true
+  butter-hit-wall(down, posn(-400, -400)) is false
+  butter-hit-wall(left, posn(0, -400)) is true
+  butter-hit-wall(left, posn(-400, -400)) is false
+  butter-hit-wall(right, posn(-880, -400)) is true
+  butter-hit-wall(right, posn(-400, -400)) is false
+end
+
+fun tick-world(current-world :: World) -> World:
+  doc: "change the current world with each tick"
+  cases (World) current-world:
+    | world(current-waffle, current-students, current-butter, current-items, time-since-item-spawn) =>
+      cases (Waffle) current-waffle:
+        | waffle(waffle-posn, waffle-health, students-killed) =>
+          cases (Butter) current-butter:
+            | butter(butter-posn, butter-direction, beenshot) =>
+              if butter-hit-wall(butter-direction, butter-posn):
+                world(current-waffle, current-students, butter(posn(0, 0), right, false), current-items, time-since-item-spawn)
+              else if butter-hit-student(current-butter, current-students):
+                world(waffle(waffle-posn, waffle-health, students-killed + 1), remove-students-butter(current-butter, 
+                    current-students), butter(posn(0, 0), right, false), current-items, time-since-item-spawn)
+              else if student-hit-waffle(current-waffle, current-students):
+                world(waffle(waffle-posn, waffle-health - 1, students-killed), remove-students-waffle(current-waffle, 
+                    current-students), current-butter, current-items, time-since-item-spawn)
+              else if waffle-hit-item(current-waffle, just-syrup(current-items)) and (waffle-health < 2):
+                world(waffle(waffle-posn, waffle-health + 1, students-killed), link(spawn-student(), current-students), 
+                  current-butter, remove-items(current-waffle, current-items), time-since-item-spawn)
+              else if waffle-hit-item(current-waffle, current-items):
+                world(current-waffle, link(spawn-student(), current-students), current-butter, 
+                  remove-items(current-waffle, current-items), time-since-item-spawn)
+              else if length(current-students) < 4:
+                world(current-waffle, link(spawn-student(), current-students), current-butter, current-items, 
+                  time-since-item-spawn)
+              else if students-killed == 15:
+                world(waffle(waffle-posn, waffle-health, 0), tick-students(students-pathfind(extract-waffle-posn(current-waffle), 
+                      current-students)), tick-butter(current-butter), link(syrup(posn(-400, -300)), current-items), time-since-item-spawn)
+              else if time-since-item-spawn == 250:
+                world(current-waffle, tick-students(students-pathfind(extract-waffle-posn(current-waffle), current-students)), 
+                  tick-butter(current-butter), spawn-flyer(current-items), 0)
+              else:
+                world(
+                  current-waffle, 
+                  tick-students(students-pathfind(extract-waffle-posn(current-waffle), 
+                        students-stuck(extract-waffle-posn(current-waffle), current-students))), 
+                  tick-butter(current-butter), 
+                  current-items, 
+                  time-since-item-spawn + 1)
+              end
+          end
+      end
+  end
+end
+#TICK
+
+big-bang(INITIAL-WORLD, 
+  [list: 
+    on-key(key-world), 
+    to-draw(display-world), 
+    on-tick-n(tick-world, 1/50),
+    stop-when(over) 
+  ])
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
